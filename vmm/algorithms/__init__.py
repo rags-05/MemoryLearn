@@ -1,10 +1,14 @@
 from vmm.algorithms.fifo import FIFOReplacementAlgorithm
 from vmm.algorithms.lru import LRUReplacementAlgorithm
+from vmm.algorithms.clock import ClockReplacementAlgorithm
+from vmm.algorithms.optimal import OptimalReplacementAlgorithm
 
 # Dictionary mapping algorithm names to their classes
 replacement_algorithms = {
     'fifo': FIFOReplacementAlgorithm,
-    'lru': LRUReplacementAlgorithm
+    'lru': LRUReplacementAlgorithm,
+    'clock': ClockReplacementAlgorithm,
+    'optimal': OptimalReplacementAlgorithm
 }
 
 def get_algorithm(name, memory_manager):

@@ -34,17 +34,26 @@ class MemoryManager:
         self.page_faults = 0
         self.memory_accesses = 0
         self.hit_ratio = 0.0
+        self.write_operations = 0
+        self.read_operations = 0
+        self.disk_writes = 0  # When dirty pages are written back
+        
+        # Advanced VMM features
+        self.enable_write_tracking = True
+        self.enable_prefetching = False
+        self.prefetch_window = 2
     
     def set_replacement_algorithm(self, algorithm):
         """Set the page replacement algorithm."""
         self.replacement_algorithm = algorithm
         
-    def access_memory(self, virtual_address):
+    def access_memory(self, virtual_address, is_write=False):
         """
         Access memory at the given virtual address.
         
         Args:
             virtual_address: The virtual address to access
+            is_write: Whether this is a write operation
             
         Returns:
             The value at the given virtual address
@@ -53,6 +62,10 @@ class MemoryManager:
             raise ValueError(f"Virtual address {virtual_address} out of bounds")
         
         self.memory_accesses += 1
+        if is_write:
+            self.write_operations += 1
+        else:
+            self.read_operations += 1
         
         # Calculate page number and offset
         page_number = virtual_address // self.page_size
@@ -71,9 +84,15 @@ class MemoryManager:
             
             frame_number = self.replacement_algorithm.select_victim_frame()
             
-            # If a page is being replaced, update page table
+            # If a page is being replaced, check if it's dirty
             replaced_page = self.page_table.get_page_number(frame_number)
             if replaced_page is not None:
+                # Check if the replaced page is dirty (needs to be written back)
+                if hasattr(self.replacement_algorithm, 'dirty_bits') and \
+                   frame_number < len(self.replacement_algorithm.dirty_bits) and \
+                   self.replacement_algorithm.dirty_bits[frame_number]:
+                    self.disk_writes += 1
+                
                 self.page_table.remove_mapping(replaced_page)
             
             # Add new mapping to page table
@@ -81,10 +100,18 @@ class MemoryManager:
             
             # Notify algorithm of page access
             self.replacement_algorithm.page_accessed(page_number, frame_number)
+            
+            # Handle prefetching if enabled
+            if self.enable_prefetching:
+                self._prefetch_pages(page_number)
         else:
             # Page hit - page already in physical memory
             # Notify algorithm of page access
             self.replacement_algorithm.page_accessed(page_number, frame_number)
+        
+        # Handle write operations
+        if is_write and hasattr(self.replacement_algorithm, 'page_written'):
+            self.replacement_algorithm.page_written(page_number, frame_number)
         
         # Calculate physical address
         physical_address = frame_number * self.page_size + offset
@@ -125,16 +152,54 @@ class MemoryManager:
         # Also write to virtual memory for simulation purposes
         self.virtual_memory[virtual_address] = value
     
+    def _prefetch_pages(self, current_page):
+        """
+        Prefetch nearby pages when prefetching is enabled.
+        
+        Args:
+            current_page: The page that was just accessed
+        """
+        for i in range(1, self.prefetch_window + 1):
+            next_page = current_page + i
+            if next_page < self.num_pages:
+                # Check if page is not already in memory
+                if self.page_table.get_frame_number(next_page) is None:
+                    # Find an empty frame or don't prefetch if all are full
+                    for frame in range(self.num_frames):
+                        if self.page_table.get_page_number(frame) is None:
+                            self.page_table.add_mapping(next_page, frame)
+                            if hasattr(self.replacement_algorithm, 'page_accessed'):
+                                self.replacement_algorithm.page_accessed(next_page, frame)
+                            break
+    
     def get_metrics(self):
         """Return current performance metrics."""
-        return {
+        miss_ratio = self.page_faults / self.memory_accesses if self.memory_accesses > 0 else 0
+        write_ratio = self.write_operations / self.memory_accesses if self.memory_accesses > 0 else 0
+        
+        metrics = {
             'page_faults': self.page_faults,
             'memory_accesses': self.memory_accesses,
-            'hit_ratio': self.hit_ratio
+            'hit_ratio': self.hit_ratio,
+            'miss_ratio': miss_ratio,
+            'write_operations': self.write_operations,
+            'read_operations': self.read_operations,
+            'write_ratio': write_ratio,
+            'disk_writes': self.disk_writes
         }
+        
+        # Add algorithm-specific metrics if available
+        if hasattr(self.replacement_algorithm, 'get_algorithm_stats'):
+            algorithm_stats = self.replacement_algorithm.get_algorithm_stats()
+            metrics.update(algorithm_stats)
+        
+        return metrics
     
     def reset_metrics(self):
         """Reset performance metrics."""
         self.page_faults = 0
         self.memory_accesses = 0
         self.hit_ratio = 0.0
+        self.write_operations = 0
+        self.read_operations = 0
+        self.disk_writes = 0
